@@ -1,10 +1,11 @@
 import json
+import os
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import asyncio
 
-TOKEN = "8686762153:AAE8jN4XISnEK_loYwhVQLJ5-rvcx5ObR0w"
+TOKEN = os.getenv("TOKEN")
 FILE = "tugas.json"
 
 # ================== DATA ==================
