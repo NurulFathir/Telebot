@@ -178,8 +178,14 @@ async def cek_reminder(context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 if __name__ == '__main__':
-    # JANGAN LUPA MASUKIN TOKEN LU LAGI DI SINI
-    TOKEN = os.getenv("TOKEN")
+    # Token ngambil dari environment variable Railway
+    TOKEN = os.getenv('TOKEN') 
+    
+    if not TOKEN:
+        print("Waduh, tokennya belum di-set ngab!")
+        exit(1)
+        
+    app = ApplicationBuilder().token(TOKEN).build()
     
     app = ApplicationBuilder().token(TOKEN).build()
     
