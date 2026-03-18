@@ -212,7 +212,7 @@ async def cek_reminder(context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
 
 if __name__ == '__main__':
-    TOKEN = os.getenv('BOT_TOKEN') 
+    TOKEN = os.getenv('TOKEN') 
     
     if not TOKEN:
         print("Tokennya belum di-set di environment variable ngab!")
