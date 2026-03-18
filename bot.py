@@ -1,11 +1,16 @@
 import logging
 import sqlite3
 import re
+import os  # Tambahin ini ngab
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import os
+
+# Setup Database SQLite biar support Volume Railway
+db_path = os.getenv('DB_PATH', 'tugas.db') # Kalo di lokal pake tugas.db, di Railway pake path volume
+conn = sqlite3.connect(db_path, check_same_thread=False)
+cursor = conn.cursor()
 
 # Setup logging
 logging.basicConfig(
