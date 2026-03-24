@@ -1,7 +1,7 @@
 import logging
 import sqlite3
 import re
-import os
+import os  # Tambahin ini ngab
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update
@@ -13,9 +13,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Setup Database SQLite (Support Railway Volume)
-db_path = os.getenv('DB_PATH', 'tugas.db')
-conn = sqlite3.connect(db_path, check_same_thread=False)
+# Setup Database SQLite
+conn = sqlite3.connect('tugas.db', check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS tugas (
@@ -31,12 +30,20 @@ conn.commit()
 
 timezone = pytz.timezone('Asia/Jakarta')
 
-# Kamus bulan
+# Kamus bulan biar bot ngerti bahasa Indonesia
 BULAN_IND = {
-    'januari': 1, 'jan': 1, 'februari': 2, 'feb': 2, 'maret': 3, 'mar': 3,
-    'april': 4, 'apr': 4, 'mei': 5, 'juni': 6, 'jun': 6, 'juli': 7, 'jul': 7,
-    'agustus': 8, 'agu': 8, 'agus': 8, 'september': 9, 'sep': 9, 'sept': 9,
-    'oktober': 10, 'okt': 10, 'november': 11, 'nov': 11, 'desember': 12, 'des': 12
+    'januari': 1, 'jan': 1,
+    'februari': 2, 'feb': 2,
+    'maret': 3, 'mar': 3,
+    'april': 4, 'apr': 4,
+    'mei': 5,
+    'juni': 6, 'jun': 6,
+    'juli': 7, 'jul': 7,
+    'agustus': 8, 'agu': 8, 'agus': 8,
+    'september': 9, 'sep': 9, 'sept': 9,
+    'oktober': 10, 'okt': 10,
+    'november': 11, 'nov': 11,
+    'desember': 12, 'des': 12
 }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -44,8 +51,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Halo ngab! Bot reminder tugas siap jalan 🫡\n\n"
         "Command:\n"
         "/tambah [nama tugas] [DD Bulan YYYY] [HH:MM opsional]\n"
-        "/edit [ID] [nama tugas] [DD Bulan YYYY] [HH:MM opsional]\n"
-        "/list - Liat urutan & ID tugas\n"
+        "/list - Liat urutan tugas\n"
         "/hapus - Hapus SEMUA tugas"
     )
     await update.message.reply_text(welcome_msg)
@@ -54,121 +60,77 @@ async def tambah(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text
 
+    # Regex buat nangkep nama tugas (bisa pakai spasi), tanggal, bulan, tahun, dan opsional jam
     pattern = r'^/tambah\s+(.+?)\s+(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})(?:\s+(\d{2}:\d{2}))?$'
     match = re.match(pattern, text)
     
     if not match:
         await update.message.reply_text(
-            "Format salah ngab! Coba input ulang pake format ini:\n"
-            "`/tambah [nama tugas] [Tanggal] [Bulan] [Tahun] [Jam opsional]`",
+            "Formatnya salah ngab! Ditolak ya. Coba input ulang pake format ini:\n"
+            "`/tambah [nama tugas] [Tanggal] [Bulan] [Tahun] [Jam opsional]`\n\n"
+            "Contoh 1: `/tambah Laporan Kimdas 20 maret 2026`\n"
+            "Contoh 2: `/tambah PR Fisika MekPan 22 april 2026 15:00`",
             parse_mode='Markdown'
         )
         return
 
     nama_tugas = match.group(1).strip()
-    tanggal_str, bulan_str, tahun_str, waktu_str = match.group(2), match.group(3).lower(), match.group(4), match.group(5)
+    tanggal_str = match.group(2)
+    bulan_str = match.group(3).lower()
+    tahun_str = match.group(4)
+    waktu_str = match.group(5) # Ini bisa None kalau jam nggak diisi
     
+    # Cek apakah bulannya valid di kamus kita
     if bulan_str not in BULAN_IND:
-        await update.message.reply_text("Typo nama bulan tuh ngab.")
+        await update.message.reply_text("Typo nama bulan tuh ngab. Coba cek lagi yak (contoh: maret, april, des).")
         return
         
     bulan_angka = BULAN_IND[bulan_str]
-    jam_menit = waktu_str if waktu_str else "23:59"
+    
+    # Kalau jam nggak diisi, otomatis set ke jam 23:59
+    if waktu_str:
+        jam_menit = waktu_str
+    else:
+        jam_menit = "23:59"
 
+    # Validasi kalender sungguhan
     try:
         deadline_str = f"{tahun_str}-{bulan_angka:02d}-{int(tanggal_str):02d} {jam_menit}"
         deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M")
         deadline_dt = timezone.localize(deadline_dt)
     except ValueError:
-        await update.message.reply_text("Tanggalnya nggak valid nih ngab.")
+        await update.message.reply_text("Tanggalnya nggak valid nih ngab. Coba cek lagi kalendernya!")
         return
 
     if deadline_dt < datetime.now(timezone):
-        await update.message.reply_text("Waduh, masa deadline-nya di masa lalu?")
+        await update.message.reply_text("Waduh, masa deadline-nya di masa lalu? Coba masukin waktu yang bener ngab.")
         return
 
-    cursor.execute("INSERT INTO tugas (chat_id, nama_tugas, deadline) VALUES (?, ?, ?)",
-                   (chat_id, nama_tugas, deadline_dt.isoformat()))
-    conn.commit()
-
-    await update.message.reply_text(f"Sip! Tugas '{nama_tugas}' aman disimpen.\nDeadline: {tanggal_str} {bulan_str.capitalize()} {tahun_str} jam {jam_menit} WIB.")
-
-# FITUR EDIT BARU
-async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    text = update.message.text
-
-    # Regex nangkep ID, Nama Tugas, Tanggal, Bulan, Tahun, Jam
-    pattern = r'^/edit\s+(\d+)\s+(.+?)\s+(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})(?:\s+(\d{2}:\d{2}))?$'
-    match = re.match(pattern, text)
-    
-    if not match:
-        await update.message.reply_text(
-            "Format salah ngab! Pake format ini yak:\n"
-            "`/edit [ID Tugas] [Nama Tugas Baru] [Tanggal] [Bulan] [Tahun] [Jam opsional]`\n\n"
-            "Cek ID Tugas dari command /list. Contoh:\n"
-            "`/edit 5 Laporan Elektro 20 maret 2026 15:00`",
-            parse_mode='Markdown'
-        )
-        return
-
-    tugas_id = match.group(1)
-    nama_tugas = match.group(2).strip()
-    tanggal_str, bulan_str, tahun_str, waktu_str = match.group(3), match.group(4).lower(), match.group(5), match.group(6)
-    
-    if bulan_str not in BULAN_IND:
-        await update.message.reply_text("Typo nama bulan tuh ngab.")
-        return
-        
-    bulan_angka = BULAN_IND[bulan_str]
-    jam_menit = waktu_str if waktu_str else "23:59"
-
-    try:
-        deadline_str = f"{tahun_str}-{bulan_angka:02d}-{int(tanggal_str):02d} {jam_menit}"
-        deadline_dt = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M")
-        deadline_dt = timezone.localize(deadline_dt)
-    except ValueError:
-        await update.message.reply_text("Tanggalnya nggak valid nih ngab.")
-        return
-
-    if deadline_dt < datetime.now(timezone):
-        await update.message.reply_text("Masa diubah ke masa lalu? Coba masukin waktu yang bener ngab.")
-        return
-
-    # Cek ID tugas beneran ada di grup ini nggak
-    cursor.execute("SELECT id FROM tugas WHERE id = ? AND chat_id = ?", (tugas_id, chat_id))
-    if not cursor.fetchone():
-        await update.message.reply_text(f"ID tugas {tugas_id} nggak ketemu ngab. Cek lagi pake /list.")
-        return
-
-    # Update data & reset status reminder biar diingetin ulang
+    # Masukin ke database
     cursor.execute(
-        """UPDATE tugas 
-           SET nama_tugas = ?, deadline = ?, reminded_24h = 0, reminded_6h = 0 
-           WHERE id = ? AND chat_id = ?""",
-        (nama_tugas, deadline_dt.isoformat(), tugas_id, chat_id)
+        "INSERT INTO tugas (chat_id, nama_tugas, deadline) VALUES (?, ?, ?)",
+        (chat_id, nama_tugas, deadline_dt.isoformat())
     )
     conn.commit()
 
-    await update.message.reply_text(f"Mantap! Tugas ID {tugas_id} udah di-update jadi '{nama_tugas}'.\nDeadline baru: {tanggal_str} {bulan_str.capitalize()} {tahun_str} jam {jam_menit} WIB.")
+    await update.message.reply_text(f"Sip! Tugas '{nama_tugas}' aman disimpen.\nDeadline: {tanggal_str} {bulan_str.capitalize()} {tahun_str} jam {jam_menit} WIB. Nanti gw ingetin!")
 
-# UPDATE LIST BIAR NAMPILIN ID TUGAS
 async def list_tugas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    cursor.execute("SELECT id, nama_tugas, deadline FROM tugas WHERE chat_id = ? ORDER BY deadline ASC", (chat_id,))
+    cursor.execute("SELECT nama_tugas, deadline FROM tugas WHERE chat_id = ? ORDER BY deadline ASC", (chat_id,))
     tugas_list = cursor.fetchall()
     
     if not tugas_list:
         await update.message.reply_text("Aman ngab, lagi nggak ada tugas! Santuy dulu aja ☕")
         return
 
-    msg = "📋 **Daftar Tugas:**\n*(Pake ID buat ngedit tugas)*\n\n"
-    for tugas in tugas_list:
-        tugas_id, nama, deadline_iso = tugas
-        dt = datetime.fromisoformat(deadline_iso)
+    msg = "📋 **Daftar Tugas (Urut dari yang paling mepet):**\n\n"
+    for idx, tugas in enumerate(tugas_list, 1):
+        nama = tugas[0]
+        dt = datetime.fromisoformat(tugas[1])
         waktu_format = dt.strftime("%d %B %Y - %H:%M WIB")
-        msg += f"**ID: {tugas_id}** | {nama}\n⏳ {waktu_format}\n\n"
+        msg += f"{idx}. {nama}\n⏳ {waktu_format}\n\n"
         
     await update.message.reply_text(msg, parse_mode='Markdown')
 
@@ -206,28 +168,28 @@ async def cek_reminder(context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("UPDATE tugas SET reminded_6h = 1 WHERE id = ?", (tugas_id,))
             conn.commit()
             
-        # Hapus otomatis kalau deadline udah lewat 7 hari (604800 detik)
-        elif sisa_waktu.total_seconds() < -604800:
+        elif sisa_waktu.total_seconds() < -86400:
             cursor.execute("DELETE FROM tugas WHERE id = ?", (tugas_id,))
             conn.commit()
 
 if __name__ == '__main__':
+    # Token ngambil dari environment variable Railway
     TOKEN = os.getenv('TOKEN') 
     
     if not TOKEN:
-        print("Tokennya belum di-set di environment variable ngab!")
+        print("Waduh, tokennya belum di-set ngab!")
         exit(1)
         
+    
     app = ApplicationBuilder().token(TOKEN).build()
     
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('tambah', tambah))
-    app.add_handler(CommandHandler('edit', edit)) # Daftarin command edit
     app.add_handler(CommandHandler('list', list_tugas))
     app.add_handler(CommandHandler('hapus', hapus))
     
     job_queue = app.job_queue
     job_queue.run_repeating(cek_reminder, interval=60, first=10)
     
-    print("Bot nyala ngab! Tekan Ctrl+C buat matiin.")
+    print("Bot nyala dengan format baru ngab! Tekan Ctrl+C buat matiin.")
     app.run_polling()
