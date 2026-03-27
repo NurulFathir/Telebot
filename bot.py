@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 # Setup logging
 logging.basicConfig(
@@ -137,33 +137,40 @@ async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     await update.message.reply_text(f"Mantap! Tugas ID {tugas_id} udah di-update jadi '{nama_tugas}'.")
 
+# FITUR UPLOAD FOTO (UPDATED BIKIN MAKIN PEKA)
 async def up_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    if not update.message.photo:
-        await update.message.reply_text("Ngab, lu harus kirim foto sekalian dikasih caption `/up [ID Tugas]` yak!", parse_mode='Markdown')
-        return
-        
-    caption = update.message.caption or ""
-    match = re.match(r'^/up\s+(\d+)', caption)
+    # Nangkep teks, entah itu dari caption foto atau teks chat biasa
+    pesan = update.message.caption or update.message.text or ""
+    
+    # Cari angka ID di dalem pesan
+    match = re.search(r'/up\s+(\d+)', pesan)
     
     if not match:
-        await update.message.reply_text("Format caption salah ngab! Pas kirim foto, kasih caption: `/up [ID Tugas]`", parse_mode='Markdown')
+        await update.message.reply_text("Format salah ngab! Kasih caption: `/up [ID Tugas]`", parse_mode='Markdown')
         return
         
     tugas_id = match.group(1)
+    
+    # Kalau ternyata dia cuma ngetik teks /up tanpa ngelampirin foto
+    if not update.message.photo:
+        await update.message.reply_text(f"Fotonya mana ngab? Lu harus kirim gambar fotonya, terus di bagian kolom 'Add a caption...' ketik `/up {tugas_id}`", parse_mode='Markdown')
+        return
+        
     foto_id = update.message.photo[-1].file_id 
     
     cursor.execute("SELECT nama_tugas FROM tugas WHERE id = ? AND chat_id = ?", (tugas_id, chat_id))
     result = cursor.fetchone()
+    
     if not result:
-        await update.message.reply_text(f"Tugas dengan ID {tugas_id} nggak ketemu ngab.")
+        await update.message.reply_text(f"Tugas dengan ID {tugas_id} nggak ketemu ngab. Cek lagi pake /list.")
         return
         
     cursor.execute("UPDATE tugas SET foto_id = ? WHERE id = ? AND chat_id = ?", (foto_id, tugas_id, chat_id))
     conn.commit()
     
-    await update.message.reply_text(f"Mantap! Foto soal buat tugas '{result[0]}' (ID: {tugas_id}) udah disimpen ke database.")
+    await update.message.reply_text(f"Mantap! Foto soal buat tugas '{result[0]}' (ID: {tugas_id}) udah berhasil disimpen ngab 📸")
 
 async def see_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -273,7 +280,7 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('tambah', tambah))
     app.add_handler(CommandHandler('edit', edit))
-    app.add_handler(CommandHandler('up', up_foto))
+    app.add_handler(MessageHandler(filters.Regex(r'^/up') | filters.CaptionRegex(r'^/up'), up_foto))
     app.add_handler(CommandHandler('see', see_foto))
     app.add_handler(CommandHandler('list', list_tugas))
     app.add_handler(CommandHandler('hapus', hapus))
