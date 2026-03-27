@@ -24,9 +24,16 @@ cursor.execute('''
         nama_tugas TEXT,
         deadline DATETIME,
         reminded_24h BOOLEAN DEFAULT 0,
-        reminded_6h BOOLEAN DEFAULT 0
+        reminded_6h BOOLEAN DEFAULT 0,
+        foto_id TEXT
     )
 ''')
+
+# Trik biar database lama otomatis nambah kolom foto tanpa error
+try:
+    cursor.execute("ALTER TABLE tugas ADD COLUMN foto_id TEXT")
+except sqlite3.OperationalError:
+    pass # Kalau kolomnya udah ada, lewatin aja
 conn.commit()
 
 timezone = pytz.timezone('Asia/Jakarta')
@@ -43,8 +50,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_msg = (
         "Halo ngab! Bot reminder tugas siap jalan 🫡\n\n"
         "Command:\n"
-        "/tambah [nama tugas] [DD Bulan YYYY] [HH:MM opsional]\n"
-        "/edit [ID] [nama tugas] [DD Bulan YYYY] [HH:MM opsional]\n"
+        "/tambah [nama] [DD Bulan YYYY] [HH:MM opsional]\n"
+        "/edit [ID] [nama] [DD Bulan YYYY] [HH:MM opsional]\n"
+        "/up [ID] (Tulis di caption foto buat nyimpen soal)\n"
+        "/see [ID] (Buat liat foto soal)\n"
         "/list - Liat urutan & ID tugas\n"
         "/hapus - Hapus SEMUA tugas"
     )
@@ -53,16 +62,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def tambah(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text
-
     pattern = r'^/tambah\s+(.+?)\s+(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})(?:\s+(\d{2}:\d{2}))?$'
     match = re.match(pattern, text)
     
     if not match:
-        await update.message.reply_text(
-            "Format salah ngab! Coba input ulang pake format ini:\n"
-            "`/tambah [nama tugas] [Tanggal] [Bulan] [Tahun] [Jam opsional]`",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text("Format salah ngab! Contoh: `/tambah Laporan 20 maret 2026 15:00`", parse_mode='Markdown')
         return
 
     nama_tugas = match.group(1).strip()
@@ -90,26 +94,16 @@ async def tambah(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("INSERT INTO tugas (chat_id, nama_tugas, deadline) VALUES (?, ?, ?)",
                    (chat_id, nama_tugas, deadline_dt.isoformat()))
     conn.commit()
-
     await update.message.reply_text(f"Sip! Tugas '{nama_tugas}' aman disimpen.\nDeadline: {tanggal_str} {bulan_str.capitalize()} {tahun_str} jam {jam_menit} WIB.")
 
-# FITUR EDIT BARU
 async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     text = update.message.text
-
-    # Regex nangkep ID, Nama Tugas, Tanggal, Bulan, Tahun, Jam
     pattern = r'^/edit\s+(\d+)\s+(.+?)\s+(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})(?:\s+(\d{2}:\d{2}))?$'
     match = re.match(pattern, text)
     
     if not match:
-        await update.message.reply_text(
-            "Format salah ngab! Pake format ini yak:\n"
-            "`/edit [ID Tugas] [Nama Tugas Baru] [Tanggal] [Bulan] [Tahun] [Jam opsional]`\n\n"
-            "Cek ID Tugas dari command /list. Contoh:\n"
-            "`/edit 5 Laporan Elektro 20 maret 2026 15:00`",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text("Format salah ngab! Contoh: `/edit 5 Laporan 20 maret 2026 15:00`", parse_mode='Markdown')
         return
 
     tugas_id = match.group(1)
@@ -131,44 +125,90 @@ async def edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Tanggalnya nggak valid nih ngab.")
         return
 
-    if deadline_dt < datetime.now(timezone):
-        await update.message.reply_text("Masa diubah ke masa lalu? Coba masukin waktu yang bener ngab.")
-        return
-
-    # Cek ID tugas beneran ada di grup ini nggak
     cursor.execute("SELECT id FROM tugas WHERE id = ? AND chat_id = ?", (tugas_id, chat_id))
     if not cursor.fetchone():
-        await update.message.reply_text(f"ID tugas {tugas_id} nggak ketemu ngab. Cek lagi pake /list.")
+        await update.message.reply_text(f"ID tugas {tugas_id} nggak ketemu ngab.")
         return
 
-    # Update data & reset status reminder biar diingetin ulang
     cursor.execute(
-        """UPDATE tugas 
-           SET nama_tugas = ?, deadline = ?, reminded_24h = 0, reminded_6h = 0 
-           WHERE id = ? AND chat_id = ?""",
+        """UPDATE tugas SET nama_tugas = ?, deadline = ?, reminded_24h = 0, reminded_6h = 0 WHERE id = ? AND chat_id = ?""",
         (nama_tugas, deadline_dt.isoformat(), tugas_id, chat_id)
     )
     conn.commit()
+    await update.message.reply_text(f"Mantap! Tugas ID {tugas_id} udah di-update jadi '{nama_tugas}'.")
 
-    await update.message.reply_text(f"Mantap! Tugas ID {tugas_id} udah di-update jadi '{nama_tugas}'.\nDeadline baru: {tanggal_str} {bulan_str.capitalize()} {tahun_str} jam {jam_menit} WIB.")
+async def up_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    if not update.message.photo:
+        await update.message.reply_text("Ngab, lu harus kirim foto sekalian dikasih caption `/up [ID Tugas]` yak!", parse_mode='Markdown')
+        return
+        
+    caption = update.message.caption or ""
+    match = re.match(r'^/up\s+(\d+)', caption)
+    
+    if not match:
+        await update.message.reply_text("Format caption salah ngab! Pas kirim foto, kasih caption: `/up [ID Tugas]`", parse_mode='Markdown')
+        return
+        
+    tugas_id = match.group(1)
+    foto_id = update.message.photo[-1].file_id 
+    
+    cursor.execute("SELECT nama_tugas FROM tugas WHERE id = ? AND chat_id = ?", (tugas_id, chat_id))
+    result = cursor.fetchone()
+    if not result:
+        await update.message.reply_text(f"Tugas dengan ID {tugas_id} nggak ketemu ngab.")
+        return
+        
+    cursor.execute("UPDATE tugas SET foto_id = ? WHERE id = ? AND chat_id = ?", (foto_id, tugas_id, chat_id))
+    conn.commit()
+    
+    await update.message.reply_text(f"Mantap! Foto soal buat tugas '{result[0]}' (ID: {tugas_id}) udah disimpen ke database.")
 
-# UPDATE LIST BIAR NAMPILIN ID TUGAS
+async def see_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    text = update.message.text
+    
+    match = re.match(r'^/see\s+(\d+)', text)
+    if not match:
+        await update.message.reply_text("Format salah ngab! Ketik: `/see [ID Tugas]`", parse_mode='Markdown')
+        return
+        
+    tugas_id = match.group(1)
+    
+    cursor.execute("SELECT foto_id, nama_tugas FROM tugas WHERE id = ? AND chat_id = ?", (tugas_id, chat_id))
+    result = cursor.fetchone()
+    
+    if not result:
+        await update.message.reply_text(f"Tugas ID {tugas_id} nggak ada ngab.")
+        return
+        
+    foto_id, nama_tugas = result[0], result[1]
+    
+    if not foto_id:
+        await update.message.reply_text(f"Tugas '{nama_tugas}' belum ada fotonya ngab. Upload dulu gih pake command `/up {tugas_id}` di caption foto.")
+        return
+        
+    await update.message.reply_photo(photo=foto_id, caption=f"Ini foto buat tugas: **{nama_tugas}**", parse_mode='Markdown')
+
 async def list_tugas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    cursor.execute("SELECT id, nama_tugas, deadline FROM tugas WHERE chat_id = ? ORDER BY deadline ASC", (chat_id,))
+    cursor.execute("SELECT id, nama_tugas, deadline, foto_id FROM tugas WHERE chat_id = ? ORDER BY deadline ASC", (chat_id,))
     tugas_list = cursor.fetchall()
     
     if not tugas_list:
         await update.message.reply_text("Aman ngab, lagi nggak ada tugas! Santuy dulu aja ☕")
         return
 
-    msg = "📋 **Daftar Tugas:**\n*(Pake ID buat ngedit tugas)*\n\n"
+    msg = "📋 **Daftar Tugas:**\n\n"
     for tugas in tugas_list:
-        tugas_id, nama, deadline_iso = tugas
+        tugas_id, nama, deadline_iso, foto_id = tugas
         dt = datetime.fromisoformat(deadline_iso)
         waktu_format = dt.strftime("%d %B %Y - %H:%M WIB")
-        msg += f"**ID: {tugas_id}** | {nama}\n⏳ {waktu_format}\n\n"
+        
+        ikon_foto = "🖼️" if foto_id else ""
+        msg += f"**ID: {tugas_id}** | {nama} {ikon_foto}\n⏳ {waktu_format}\n\n"
         
     await update.message.reply_text(msg, parse_mode='Markdown')
 
@@ -180,39 +220,49 @@ async def hapus(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cek_reminder(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(timezone)
-    cursor.execute("SELECT id, chat_id, nama_tugas, deadline, reminded_24h, reminded_6h FROM tugas")
+    
+    # TAMBAHAN: Select foto_id juga biar bisa dipanggil
+    cursor.execute("SELECT id, chat_id, nama_tugas, deadline, reminded_24h, reminded_6h, foto_id FROM tugas")
     semua_tugas = cursor.fetchall()
     
     for tugas in semua_tugas:
-        tugas_id, chat_id, nama_tugas, deadline_iso, rem_24, rem_6 = tugas
+        tugas_id, chat_id, nama_tugas, deadline_iso, rem_24, rem_6, foto_id = tugas
         deadline = datetime.fromisoformat(deadline_iso)
         sisa_waktu = deadline - now
         
+        # REMINDER H-24
         if timedelta(hours=6) < sisa_waktu <= timedelta(hours=24) and not rem_24:
-            await context.bot.send_message(
-                chat_id=chat_id, 
-                text=f"⚠️ **REMINDER H-24 JAM** ⚠️\nNgab, jangan lupa kerjain tugas: *{nama_tugas}*\nDeadline: besok jam {deadline.strftime('%H:%M WIB')}!",
-                parse_mode='Markdown'
-            )
+            teks_pengingat = f"⚠️ **REMINDER H-24 JAM** ⚠️\nNgab, jangan lupa kerjain tugas: *{nama_tugas}*\nDeadline: besok jam {deadline.strftime('%H:%M WIB')}!"
+            
+            # Cek ada foto tugasnya nggak? Kalo ada kirim pake foto
+            if foto_id:
+                await context.bot.send_photo(chat_id=chat_id, photo=foto_id, caption=teks_pengingat, parse_mode='Markdown')
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=teks_pengingat, parse_mode='Markdown')
+                
             cursor.execute("UPDATE tugas SET reminded_24h = 1 WHERE id = ?", (tugas_id,))
             conn.commit()
             
+        # REMINDER H-6
         elif sisa_waktu <= timedelta(hours=6) and not rem_6 and sisa_waktu.total_seconds() > 0:
-            await context.bot.send_message(
-                chat_id=chat_id, 
-                text=f"🚨 **REMINDER MEPET (H-6 JAM)** 🚨\nGAS NGERJAIN NGAB! Tugas: *{nama_tugas}*\nDeadline: HARI INI jam {deadline.strftime('%H:%M WIB')}!",
-                parse_mode='Markdown'
-            )
+            teks_pengingat = f"🚨 **REMINDER MEPET (H-6 JAM)** 🚨\nGAS NGERJAIN NGAB! Tugas: *{nama_tugas}*\nDeadline: HARI INI jam {deadline.strftime('%H:%M WIB')}!"
+            
+            # Kirim foto kalo ada
+            if foto_id:
+                await context.bot.send_photo(chat_id=chat_id, photo=foto_id, caption=teks_pengingat, parse_mode='Markdown')
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=teks_pengingat, parse_mode='Markdown')
+                
             cursor.execute("UPDATE tugas SET reminded_6h = 1 WHERE id = ?", (tugas_id,))
             conn.commit()
             
-        # Hapus otomatis kalau deadline udah lewat 7 hari (604800 detik)
-        elif sisa_waktu.total_seconds() < -604800:
+        # HAPUS OTOMATIS +24 JAM SETELAH DEADLINE
+        elif sisa_waktu.total_seconds() < -86400:
             cursor.execute("DELETE FROM tugas WHERE id = ?", (tugas_id,))
             conn.commit()
 
 if __name__ == '__main__':
-    TOKEN = os.getenv('TOKEN') 
+    TOKEN = os.getenv('BOT_TOKEN') 
     
     if not TOKEN:
         print("Tokennya belum di-set di environment variable ngab!")
@@ -222,7 +272,9 @@ if __name__ == '__main__':
     
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('tambah', tambah))
-    app.add_handler(CommandHandler('edit', edit)) # Daftarin command edit
+    app.add_handler(CommandHandler('edit', edit))
+    app.add_handler(CommandHandler('up', up_foto))
+    app.add_handler(CommandHandler('see', see_foto))
     app.add_handler(CommandHandler('list', list_tugas))
     app.add_handler(CommandHandler('hapus', hapus))
     
